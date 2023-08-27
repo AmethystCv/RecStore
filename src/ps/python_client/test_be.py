@@ -3,7 +3,7 @@ import time
 from client import ParameterClient
 def main():
     keys_raw = []
-    for i in range(100000):
+    for i in range(2000):
         keys_raw.append(i)
     keys = th.tensor(keys_raw, dtype=th.int64)
     client = ParameterClient("127.0.0.1", 15000, 0, 32)

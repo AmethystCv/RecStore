@@ -1,6 +1,7 @@
 #pragma once
 #include <folly/container/F14Map.h>
 #include <memory>
+#include <thread>
 
 #include "base/factory.h"
 #include "base_kv.h"
@@ -43,7 +44,8 @@ class KVEngineDoubleDesk : public BaseKV {
   char *bouncedBuffer_[MAX_COROTINE_SIZE];
   char *write_buffer_[MAX_COROTINE_SIZE];
   std::unique_ptr<ssdps::SpdkWrapper> ssd_;
-
+  std::thread cleaner_thread_;
+  std::atomic<bool> cleaner_stop_{false};
   std::pair<int64_t, int> Mapping(int64_t index) const {
 #if 0
     int64_t lba_no = index * value_size / ssd_->GetLBASize();
@@ -223,6 +225,8 @@ public:
       bouncedBuffer_[i] = (char *)rawbouncedBuffer_ + i * kBouncedBuffer_ * ssd_->GetLBASize();
       write_buffer_[i] = (char *)rawwrite_buffer_ + i * pinned_bytes;
     }
+
+    cleaner_thread_ = std::thread(&KVEngineDoubleDesk::Cleaner, this);
   }
 
   void Init(){
@@ -393,7 +397,7 @@ public:
     std::vector<int> indexes;
     std::vector<int> free_list;
     uint64_t hit_cnt_sum;
-    while(1){
+    while(LIKELY(!cleaner_stop_)){
       indexes.clear();
       free_list.clear();
       hit_cnt_sum = 0;
@@ -403,6 +407,10 @@ public:
           hit_cnt_sum += index_info[i].hit_cnt;
         }
       }
+      if(indexes.size() == 0){
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        continue;
+      }
       uint64_t half_hit_cnt_avg = hit_cnt_sum / indexes.size() / 2;
       for(int i = 0; i < indexes.size(); i++){
         int index = indexes[i];
@@ -411,6 +419,7 @@ public:
           index_info[index].in_cache = false;
         }
       }
+      std::cout << "cleaned " << free_list.size() << " entries" << std::endl;
       std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       lf_list.InsertFreeList(free_list);
     }
