@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cstdint>
 #include <experimental/filesystem>
-#include <boost/coroutine2/all.hpp>
 
 #include "base/array.h"
 #include "base/timer.h"
@@ -13,10 +12,6 @@
 #include "storage/kv_engine/base_kv.h"
 #include "folly/ProducerConsumerQueue.h"
 #include "parameters.h"
-
-using boost::coroutines2::coroutine;
-
-static const int KEY_CNT = 12543670;
 
 template <typename key_t>
 struct TaskElement {
@@ -36,7 +31,7 @@ class CachePS {
  public:
   using key_t = uint64_t;
 
-  CachePS(int64_t dict_capability, int value_size, int64_t memory_pool_size, int num_threads, int corotine_per_thread, int max_batch_keys_size)
+  CachePS(int64_t dict_capability, int value_size, int64_t memory_pool_size, int num_threads, int max_batch_keys_size)
   : value_size(value_size) 
   {
     BaseKVConfig config;
@@ -45,7 +40,6 @@ class CachePS {
     config.value_size = value_size;
     config.memory_pool_size = memory_pool_size;
     config.num_threads = num_threads;
-    config.corotine_per_thread = corotine_per_thread;
     config.max_batch_keys_size = max_batch_keys_size;
     auto p = base::Factory<BaseKV, const BaseKVConfig &>::NewInstance("KVEngineDoubleDesk",
                                                                       config);
@@ -77,7 +71,6 @@ class CachePS {
   bool LoadCkpt(const std::vector<std::string> &model_config_path,
                 const std::vector<std::string> &emb_file_path) {
     // base_kv_->loadCkpt();
-    // LoadFakeData(KEY_CNT);
     return true;
   }
 
@@ -89,7 +82,7 @@ class CachePS {
         key, std::string_view((char *)item->data(), dim * sizeof(float)), tid);
   }
 
-  void PutParameter(coroutine<void>::push_type& sink, const ParameterCompressReader *reader, int tid){
+  void PutParameter(const ParameterCompressReader *reader, int tid){
     std::vector<uint64_t> keys_vec;
     std::vector<base::ConstArray<float>> values;
     for(int i = 0; i < reader->item_size(); i++){
@@ -98,7 +91,7 @@ class CachePS {
     }
     base::ConstArray<uint64_t> keys(keys_vec);
 
-    base_kv_->BatchPut(sink, keys, values, tid);
+    base_kv_->BatchPut(keys, values, tid);
   }
 
   bool GetParameterRun2Completion(key_t key, ParameterPack &pack, int tid) {
@@ -124,10 +117,10 @@ class CachePS {
     return true;
   }
 
-  bool GetParameterRun2Completion(coroutine<void>::push_type& sink, base::ConstArray<uint64_t> keys, std::vector<ParameterPack> &pack, int tid) {
+  bool GetParameterRun2Completion(base::ConstArray<uint64_t> keys, std::vector<ParameterPack> &pack, int tid) {
     std::vector<base::ConstArray<float>> values;
 
-    base_kv_->BatchGet(sink, keys, &values, tid);
+    base_kv_->BatchGet(keys, &values, tid);
   
     for(int i = 0; i < keys.Size(); i++){
       pack.emplace_back(keys[i], values[i].Size(), values[i].Data());

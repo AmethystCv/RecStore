@@ -2,7 +2,6 @@
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
-#include <boost/coroutine2/all.hpp>
 #include <gflags/gflags.h>
 
 #include <cstdint>
@@ -37,10 +36,7 @@ using xmhps::PSCommand;
 using xmhps::PutParameterRequest;
 using xmhps::PutParameterResponse;
 
-using boost::coroutines2::coroutine;
-
 DEFINE_int32(thread_num, 16, "Thread num");
-DEFINE_int32(corotine_per_thread, 4, "Corotine per thread");
 DEFINE_string(port, "15000", "Server Port");
 DEFINE_int64(dict_capability, 12543770LL, "Dict capability");
 DEFINE_int32(value_size, 128, "Value size");
@@ -100,7 +96,6 @@ class ParameterServiceImpl final : public xmhps::ParameterService::AsyncService 
 private:
   CachePS *cache_ps_;
   int thread_num_;
-  int corotine_per_thread_;
   std::vector<std::thread> thread_pool;
   std::atomic<uint64_t> get_key_cnt;
 public:
@@ -117,7 +112,7 @@ public:
   }
 
 
-  ParameterServiceImpl(CachePS *cache_ps, int thread_num, int corotine_per_thread) : cache_ps_(cache_ps), thread_num_(thread_num), corotine_per_thread_(corotine_per_thread) {
+  ParameterServiceImpl(CachePS *cache_ps, int thread_num) : cache_ps_(cache_ps), thread_num_(thread_num) {
     for(int i = 0; i < thread_num_; i++){
       thread_pool.push_back(std::thread(&ParameterServiceImpl::Process, this, i));
     }
@@ -126,7 +121,7 @@ public:
   }
 
 
-  void DoGetParameter(coroutine<void>::push_type& sink, GetRequestParam *under_process, int tid){
+  void DoGetParameter(GetRequestParam *under_process, int tid){
     GetParameterRequest *request = &under_process->request;
     GetParameterResponse *reply = &under_process->reply;
     base::ConstArray<uint64_t> keys_array(request->keys());
@@ -141,7 +136,7 @@ public:
     //     << "[PS] Getting " << keys_array.Size() << " keys";
 
     std::vector<ParameterPack> packs;
-    cache_ps_->GetParameterRun2Completion(sink, keys_array, packs, tid);
+    cache_ps_->GetParameterRun2Completion(keys_array, packs, tid);
     for (auto each : packs) {
       compressor.AddItem(each, &blocks);
     }
@@ -158,17 +153,17 @@ public:
     get_key_cnt.fetch_add(keys_array.Size());
   }
 
-  void DoPutParameter(coroutine<void>::push_type& sink, PutRequestParam *under_process, int tid){
+  void DoPutParameter(PutRequestParam *under_process, int tid){
     PutParameterRequest *request = &under_process->request;
     const ParameterCompressReader *reader =
         reinterpret_cast<const ParameterCompressReader *>(
             request->parameter_value().data());
-    cache_ps_->PutParameter(sink, reader, tid);
+    cache_ps_->PutParameter(reader, tid);
     under_process->timer.end();
     under_process->responder.Finish(under_process->reply, Status::OK, under_process);
   }
 
-  void DoCommand(coroutine<void>::push_type& sink, CommandRequestParam *under_process, int tid){
+  void DoCommand(CommandRequestParam *under_process, int tid){
     CommandRequest *request = &under_process->request;
     xmh::Timer timer_ps_get_req("PS Command Req");
     if (request->command() == PSCommand::CLEAR_PS) {
@@ -203,42 +198,28 @@ public:
     under_process->responder.Finish(under_process->reply, Status::OK, under_process);
   }
 
-  static void worker_func(coroutine<void>::push_type& sink, int work_id, ParameterServiceImpl* service){
+  void worker_func(int work_id){
     DispatchParam *under_process;
     while(true){
-      if(service->task_queue.try_pop(under_process)){
-        if(under_process->request_type == DispatchParam::RequestType::GET){
-          service->DoGetParameter(sink, static_cast<GetRequestParam *>(under_process), work_id);
-          continue;
-        }
-        if(under_process->request_type == DispatchParam::RequestType::PUT){
-          service->DoPutParameter(sink, static_cast<PutRequestParam *>(under_process), work_id);
-          continue;
-        }
-        if(under_process->request_type == DispatchParam::RequestType::COMMAND){
-          service->DoCommand(sink, static_cast<CommandRequestParam *>(under_process), work_id);
-          continue;
-        }
-      } else {
-        sink();
+      under_process = this->task_queue.pop();
+      if(under_process->request_type == DispatchParam::RequestType::GET){
+        this->DoGetParameter(static_cast<GetRequestParam *>(under_process), work_id);
+        continue;
+      }
+      if(under_process->request_type == DispatchParam::RequestType::PUT){
+        this->DoPutParameter(static_cast<PutRequestParam *>(under_process), work_id);
+        continue;
+      }
+      if(under_process->request_type == DispatchParam::RequestType::COMMAND){
+        this->DoCommand(static_cast<CommandRequestParam *>(under_process), work_id);
+        continue;
       }
     }
   }
 
   void Process(int work_id){
-    const int kMaxWorker = 8;
-    CHECK_LE(corotine_per_thread_, kMaxWorker);
     base::bind_core(work_id);
-    using std::placeholders::_1;
-    coroutine<void>::pull_type* worker[kMaxWorker];
-    for (int i = 0; i < corotine_per_thread_; i++) {
-        worker[i] = new coroutine<void>::pull_type{ std::bind(worker_func, _1, work_id * corotine_per_thread_ + i, this) };
-    }
-    while (true){
-      for(int i = 0; i < corotine_per_thread_; i++){
-        (*worker[i])();
-      }
-    }
+    worker_func(work_id);
   }
 
 };
@@ -251,8 +232,8 @@ class GRPCParameterServer : public BaseParameterServer {
   void Run() {
     std::string server_address("0.0.0.0:");
     server_address += FLAGS_port;
-    auto cache_ps = std::make_unique<CachePS>(FLAGS_dict_capability, FLAGS_value_size, FLAGS_memory_pool_size, FLAGS_thread_num, FLAGS_corotine_per_thread, FLAGS_max_batch_size);  // 1GB dict
-    ParameterServiceImpl service(cache_ps.get(), FLAGS_thread_num, FLAGS_corotine_per_thread);
+    auto cache_ps = std::make_unique<CachePS>(FLAGS_dict_capability, FLAGS_value_size, FLAGS_memory_pool_size, FLAGS_thread_num, FLAGS_max_batch_size);  // 1GB dict
+    ParameterServiceImpl service(cache_ps.get(), FLAGS_thread_num);
     grpc::EnableDefaultHealthCheckService(true);
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
     ServerBuilder builder;

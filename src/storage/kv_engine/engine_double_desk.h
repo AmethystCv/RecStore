@@ -4,12 +4,14 @@
 #include <thread>
 
 #include "base/factory.h"
+#include "base/lf_list.h"
 #include "base_kv.h"
-#include "base/lf_list.h" 
 #include "storage/ssd/conaiveKVell.h"
 
+const static int THRETHOLD = 256;
+static thread_local int in_queue = 0;
 class KVEngineDoubleDesk : public BaseKV {
-  struct IndexInfo{
+  struct IndexInfo {
     bool in_cache = false;
     int cache_offset = -1;
     uint64_t hit_cnt;
@@ -20,38 +22,35 @@ class KVEngineDoubleDesk : public BaseKV {
       folly::f14::DefaultAlloc<std::pair<uint64_t const, uint64_t>>>;
 
   constexpr static int MAX_THREAD_CNT = 32;
-  constexpr static int MAXCOROTINE_SIZE_PERTHREAD = 8;
-  constexpr static int MAX_COROTINE_SIZE = MAX_THREAD_CNT * MAXCOROTINE_SIZE_PERTHREAD;
   constexpr static int kBouncedBuffer_ = 20000;
-  char *cache_;
   const int value_size;
   const int max_batch_keys_size;
+  const int thread_num;
   const uint64_t cache_size;
   const uint64_t per_thread_buffer_size;
-  dict_type hash_table_;
-  uint64_t *unhit_array[MAX_COROTINE_SIZE];
-  const int thread_num;
-  const int corotine_per_thread;
-  const int corotine_num;
-  char *per_thread_buffer[MAX_COROTINE_SIZE];
-  IndexInfo *index_info;
-  uint64_t key_cnt;
-  uint64_t cache_entry_size;
-  base::LFList lf_list;
-  uint64_t vector_capability;
+  const uint64_t cache_entry_size;
+  const uint64_t vector_capability;
+  char *cache_;
   char *rawbouncedBuffer_;
+  char *per_thread_buffer[MAX_THREAD_CNT];
   char *rawwrite_buffer_;
-  char *bouncedBuffer_[MAX_COROTINE_SIZE];
-  char *write_buffer_[MAX_COROTINE_SIZE];
+  char *bouncedBuffer_[MAX_THREAD_CNT];
+  char *write_buffer_[MAX_THREAD_CNT];
+  uint64_t key_cnt;
+  uint64_t *unhit_array[MAX_THREAD_CNT];
+  dict_type hash_table_;
+  IndexInfo *index_info;
+  base::LFList lf_list;
   std::unique_ptr<ssdps::SpdkWrapper> ssd_;
   std::thread cleaner_thread_;
   std::atomic<bool> cleaner_stop_{false};
+
   std::pair<int64_t, int> Mapping(int64_t index) const {
 #if 0
     int64_t lba_no = index * value_size / ssd_->GetLBASize();
     int in_lba_offset = (index * value_size) % ssd_->GetLBASize();
     return std::make_pair(lba_no, in_lba_offset);
-#else 
+#else
 #if 0
     int64_t lba_no = index * 1;
     int in_lba_offset = 0;
@@ -65,12 +64,11 @@ class KVEngineDoubleDesk : public BaseKV {
   }
 
   static void ReadCompleteCB(void *ctx, const struct spdk_nvme_cpl *cpl) {
-    std::atomic<int> *read_complete = (std::atomic<int> *)ctx;
     if (FOLLY_UNLIKELY(spdk_nvme_cpl_is_error(cpl))) {
       LOG(FATAL) << "I/O error status: "
                  << spdk_nvme_cpl_get_status_string(&cpl->status);
     }
-    read_complete->fetch_add(1);
+    in_queue--;
   }
 
   static void BulkLoadCB(void *ctx, const struct spdk_nvme_cpl *cpl) {
@@ -82,15 +80,14 @@ class KVEngineDoubleDesk : public BaseKV {
     counter->fetch_add(1);
   }
 
-  void SubBulkLoad(int keys_size,
-                   base::ConstArray<uint64_t> indexs_array, const void *value,
-                   char *pinned_value, int tid) {
+  void SubBulkLoad(int keys_size, base::ConstArray<uint64_t> indexs_array,
+                   const void *value, char *pinned_value, int tid) {
     CHECK(keys_size == indexs_array.Size());
 
     int64_t subarray_size = keys_size;
 
-    std::atomic_int finished_counter{0};  // # of finished write page
-    int submit_counter = 0;               // # of all writed pages
+    std::atomic_int finished_counter{0}; // # of finished write page
+    int submit_counter = 0;              // # of all writed pages
     int64_t old_page_id = -1;
     for (int64_t i = 0; i < subarray_size; i++) {
       uint64_t index = indexs_array[i];
@@ -100,9 +97,10 @@ class KVEngineDoubleDesk : public BaseKV {
         // write page
         int ret;
         do {
-          ret = ssd_->SubmitWriteCommand(
-              pinned_value + submit_counter * ssd_->GetLBASize(),
-              ssd_->GetLBASize(), old_page_id, BulkLoadCB, &finished_counter, tid);
+          ret = ssd_->SubmitWriteCommand(pinned_value + submit_counter *
+                                                            ssd_->GetLBASize(),
+                                         ssd_->GetLBASize(), old_page_id,
+                                         BulkLoadCB, &finished_counter, tid);
           ssd_->PollCompleteQueue(tid);
         } while (ret != 0);
         submit_counter++;
@@ -121,17 +119,19 @@ class KVEngineDoubleDesk : public BaseKV {
       ssd_->PollCompleteQueue(tid);
     } while (ret != 0);
     submit_counter++;
-    while (submit_counter != finished_counter) ssd_->PollCompleteQueue(tid);
+    while (submit_counter != finished_counter)
+      ssd_->PollCompleteQueue(tid);
   }
 
-  void SubBulkLoad(int keys_size, base::ConstArray<uint64_t> indexs_array, std::vector<base::ConstArray<float>> &value, int start,
+  void SubBulkLoad(int keys_size, base::ConstArray<uint64_t> indexs_array,
+                   std::vector<base::ConstArray<float>> &value, int start,
                    char *pinned_value, int tid) {
     CHECK(keys_size == indexs_array.Size());
 
     int64_t subarray_size = keys_size;
 
-    std::atomic_int finished_counter{0};  // # of finished write page
-    int submit_counter = 0;               // # of all writed pages
+    std::atomic_int finished_counter{0}; // # of finished write page
+    int submit_counter = 0;              // # of all writed pages
     int64_t old_page_id = -1;
     for (int64_t i = 0; i < subarray_size; i++) {
       uint64_t index = indexs_array[i];
@@ -141,9 +141,10 @@ class KVEngineDoubleDesk : public BaseKV {
         // write page
         int ret;
         do {
-          ret = ssd_->SubmitWriteCommand(
-              pinned_value + submit_counter * ssd_->GetLBASize(),
-              ssd_->GetLBASize(), old_page_id, BulkLoadCB, &finished_counter, tid);
+          ret = ssd_->SubmitWriteCommand(pinned_value + submit_counter *
+                                                            ssd_->GetLBASize(),
+                                         ssd_->GetLBASize(), old_page_id,
+                                         BulkLoadCB, &finished_counter, tid);
           ssd_->PollCompleteQueue(tid);
         } while (ret != 0);
         submit_counter++;
@@ -160,34 +161,33 @@ class KVEngineDoubleDesk : public BaseKV {
           pinned_value + submit_counter * ssd_->GetLBASize(),
           ssd_->GetLBASize(), old_page_id, BulkLoadCB, &finished_counter, tid);
       ssd_->PollCompleteQueue(tid);
-    } while (ret != 0); 
+    } while (ret != 0);
     submit_counter++;
-    while (submit_counter != finished_counter) ssd_->PollCompleteQueue(tid);
+    while (submit_counter != finished_counter)
+      ssd_->PollCompleteQueue(tid);
   }
 
 public:
   explicit KVEngineDoubleDesk(const BaseKVConfig &config)
-    : BaseKV(config), 
-    value_size(config.value_size),
-    max_batch_keys_size(config.max_batch_keys_size),
-    cache_size(config.capacity * value_size * 0.05),
-    per_thread_buffer_size((long long)value_size * (long long)max_batch_keys_size),
-    thread_num(config.num_threads),
-    corotine_per_thread(config.corotine_per_thread),
-    corotine_num(corotine_per_thread * config.num_threads),
-    cache_entry_size(cache_size / value_size),
-    lf_list(cache_entry_size),
-    vector_capability(config.capacity)
-    {
+      : BaseKV(config), value_size(config.value_size),
+        max_batch_keys_size(config.max_batch_keys_size),
+        thread_num(config.num_threads),
+        cache_size(config.capacity * value_size * 0.05),
+        per_thread_buffer_size((long long)value_size *
+                               (long long)max_batch_keys_size),
+        cache_entry_size(cache_size / value_size), 
+        vector_capability(config.capacity),
+        lf_list(cache_entry_size) {
 
-    CHECK(value_size % sizeof(float) == 0) << "value_size must be multiple of 4";
+    CHECK(value_size % sizeof(float) == 0)
+        << "value_size must be multiple of 4";
     CHECK_GT(value_size, 0) << "value_size must be positive";
     CHECK_GT(max_batch_keys_size, 0) << "max_batch_keys_size must be positive";
-    CHECK_GT(per_thread_buffer_size, 0) << "per_thread_buffer_size must be positive";
+    CHECK_GT(per_thread_buffer_size, 0)
+        << "per_thread_buffer_size must be positive";
     CHECK_GT(thread_num, 0) << "thread_num must be positive";
-    CHECK_LE(thread_num, MAX_THREAD_CNT) << "thread_num must be less than " << MAX_THREAD_CNT;
-    CHECK_GE(corotine_num, 0) << "corotine_num must be positive";
-    CHECK_LE(corotine_num, MAX_COROTINE_SIZE) << "corotine_num must be less than " << MAX_COROTINE_SIZE;
+    CHECK_LE(thread_num, MAX_THREAD_CNT)
+        << "thread_num must be less than " << MAX_THREAD_CNT;
 
     LOG(INFO) << "value_size: " << value_size;
     LOG(INFO) << "max_batch_keys_size: " << max_batch_keys_size;
@@ -196,44 +196,47 @@ public:
 
     index_info = new IndexInfo[config.capacity];
     CHECK(index_info) << "failed to allocate index_info";
-    
+
     ssd_ = ssdps::SpdkWrapper::create(thread_num);
     CHECK(ssd_) << "failed to allocate ssd";
 
     cache_ = new char[cache_size];
     CHECK(cache_) << "failed to allocate cache";
-    
-    for (int i = 0; i < corotine_num; i++) {
+
+    for (int i = 0; i < thread_num; i++) {
       per_thread_buffer[i] = new char[per_thread_buffer_size];
       unhit_array[i] = new uint64_t[max_batch_keys_size];
     }
     Init();
     ssd_->Init();
-    rawbouncedBuffer_ = (char *)spdk_malloc(kBouncedBuffer_ * ssd_->GetLBASize() * corotine_num, 0, NULL,
-                                 SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-                            
+    rawbouncedBuffer_ =
+        (char *)spdk_malloc(kBouncedBuffer_ * ssd_->GetLBASize() * thread_num,
+                            0, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+
     // cudaMallocHost(&bouncedBuffer_, kBouncedBuffer_ * ssd_->GetLBASize(),
     //                cudaHostAllocDefault);
     CHECK(rawbouncedBuffer_);
     const int nr_batch_pages = 32;
     int64_t pinned_bytes = ssd_->GetLBASize() * nr_batch_pages;
-    rawwrite_buffer_ = (char *)spdk_malloc(
-        pinned_bytes * corotine_num, 0, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+    rawwrite_buffer_ =
+        (char *)spdk_malloc(pinned_bytes * thread_num, 0, NULL,
+                            SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
     CHECK(rawwrite_buffer_) << "spdk_malloc";
-
-    for (int i = 0; i < corotine_num; i++) {
-      bouncedBuffer_[i] = (char *)rawbouncedBuffer_ + i * kBouncedBuffer_ * ssd_->GetLBASize();
+    CHECK_LE(value_size, ssd_->GetLBASize()) << "KISS";
+    for (int i = 0; i < thread_num; i++) {
+      bouncedBuffer_[i] =
+          (char *)rawbouncedBuffer_ + i * kBouncedBuffer_ * ssd_->GetLBASize();
       write_buffer_[i] = (char *)rawwrite_buffer_ + i * pinned_bytes;
     }
 
-    cleaner_thread_ = std::thread(&KVEngineDoubleDesk::Cleaner, this);
+    // cleaner_thread_ = std::thread(&KVEngineDoubleDesk::Cleaner, this);
   }
 
-  void Init(){
+  void Init() {
     hash_table_.clear();
     lf_list.clear();
     std::vector<int> free_list;
-    for(int i = 0; i < cache_entry_size - 1; i++){
+    for (int i = 0; i < cache_entry_size - 1; i++) {
       free_list.push_back(i);
     }
     lf_list.InsertFreeList(free_list);
@@ -241,7 +244,7 @@ public:
   }
 
   ~KVEngineDoubleDesk() override {
-    for (int i = 0; i < corotine_num; i++) {
+    for (int i = 0; i < thread_num; i++) {
       delete per_thread_buffer[i];
       delete unhit_array[i];
     }
@@ -255,74 +258,85 @@ public:
     LOG(FATAL) << "not implemented";
   }
 
-  void BatchGet(coroutine<void>::push_type& sink, base::ConstArray<uint64> keys,
+  void BatchGet(base::ConstArray<uint64> keys,
                 std::vector<base::ConstArray<float>> *values,
-                unsigned rt) override {
+                unsigned t) override {
     xmh::Timer index_timer("BatchGet index");
     xmh::Timer ssd_timer("BatchGet ssd");
     xmh::Timer cache_timer("BatchGet cache");
-    int unhit_size = 0;
-    index_timer.CumStart();
-    int t = rt / corotine_per_thread;
-    std::atomic<int> readCompleteCount{0};
     xmh::Timer timer_kvell_submitCommand("Hier-SSD command");
-    CHECK_LE(value_size, ssd_->GetLBASize()) << "KISS";
-    for (int i = 0; i < keys.Size(); i++) {
-      const auto key_iter = hash_table_.find(keys[i]);
-      if(key_iter == hash_table_.end()){
-        values->emplace_back(nullptr, 0);
-        continue;
-      }
-      IndexInfo *info = &index_info[key_iter->second];
-      if(info->in_cache){
-        info->hit_cnt++;
-        values->emplace_back((float *)(cache_ + info->cache_offset * value_size), value_size / sizeof(float));
-      } else {
-        int64_t count_offset = -1;
-        count_offset = key_iter->second;
-        timer_kvell_submitCommand.CumStart();
-        int64_t lba_no;
-        int in_lba_offset;
-        std::tie(lba_no, in_lba_offset) = Mapping(count_offset);
-        ssd_->SubmitReadCommand(bouncedBuffer_[rt] + unhit_size * ssd_->GetLBASize(),
-                                value_size, lba_no, ReadCompleteCB, &readCompleteCount, t);
-        timer_kvell_submitCommand.CumEnd();
 
-        values->emplace_back(
-            (float *)(bouncedBuffer_[rt] + unhit_size * ssd_->GetLBASize() + in_lba_offset),
-            value_size / sizeof(float));
-        unhit_array[rt][unhit_size] = key_iter->second;
-        unhit_size++;
+    int unhit_size = 0;
+    int i = 0;
+    index_timer.CumStart();
+    while(i < keys.Size()){
+      if(in_queue < THRETHOLD){
+        const auto key_iter = hash_table_.find(keys[i]);
+        i++;
+        if (key_iter == hash_table_.end()) {
+          values->emplace_back(nullptr, 0);
+          continue;
+        }
+        IndexInfo *info = &index_info[key_iter->second];
+        if (info->in_cache) {
+          info->hit_cnt++;
+          values->emplace_back(
+              (float *)(cache_ + info->cache_offset * value_size),
+              value_size / sizeof(float));
+        } else {
+          int64_t count_offset = -1;
+          count_offset = key_iter->second;
+          timer_kvell_submitCommand.CumStart();
+          int64_t lba_no;
+          int in_lba_offset;
+          std::tie(lba_no, in_lba_offset) = Mapping(count_offset);
+          in_queue++;
+          ssd_->SubmitReadCommand(
+              bouncedBuffer_[t] + unhit_size * ssd_->GetLBASize(), value_size,
+              lba_no, ReadCompleteCB, NULL, t);
+          timer_kvell_submitCommand.CumEnd();
+
+          values->emplace_back((float *)(bouncedBuffer_[t] +
+                                        unhit_size * ssd_->GetLBASize() +
+                                        in_lba_offset),
+                              value_size / sizeof(float));
+          unhit_array[t][unhit_size] = key_iter->second;
+          unhit_size++;
+        }
       }
+      ssd_->PollCompleteQueue(t);
     }
-    timer_kvell_submitCommand.CumReport();
+
     index_timer.CumEnd();
-    if(unhit_size){
-      sink();
-    }
+
     ssd_timer.CumStart();
     xmh::PerfCounter::Record("unhit_size Keys", unhit_size);
-    while(unhit_size != readCompleteCount.load()){
+    while (in_queue != 0) {
       ssd_->PollCompleteQueue(t);
     }
     ssd_timer.CumEnd();
     cache_timer.CumStart();
     auto free_pos = lf_list.TryPop(unhit_size);
     int j = 0;
-    for(int i = free_pos.first; i != free_pos.second; i = (i + 1) % cache_entry_size){
-      index_info[unhit_array[rt][j]].in_cache = true;
+    for (int i = free_pos.first; i != free_pos.second;
+         i = (i + 1) % cache_entry_size) {
+      index_info[unhit_array[t][j]].in_cache = true;
       int pos = lf_list[i];
-      index_info[unhit_array[rt][j]].cache_offset = pos;
+      index_info[unhit_array[t][j]].cache_offset = pos;
       int64_t lba_no;
       int in_lba_offset;
-      std::tie(lba_no, in_lba_offset) = Mapping(unhit_array[rt][j]);
-      memcpy(cache_ + pos * value_size, bouncedBuffer_[rt] + j * ssd_->GetLBASize() + in_lba_offset, value_size);
+      std::tie(lba_no, in_lba_offset) = Mapping(unhit_array[t][j]);
+      memcpy(cache_ + pos * value_size,
+             bouncedBuffer_[t] + j * ssd_->GetLBASize() + in_lba_offset,
+             value_size);
       j++;
     }
     cache_timer.CumEnd();
+
     index_timer.CumReport();
     ssd_timer.CumReport();
     cache_timer.CumReport();
+    timer_kvell_submitCommand.CumReport();
   }
 
   void BulkLoad(base::ConstArray<uint64_t> keys, const void *value) override {
@@ -339,20 +353,15 @@ public:
     return std::make_pair(0, 0);
   }
 
-  void BatchGet(base::ConstArray<uint64_t> keys,
-                        std::vector<base::ConstArray<float>> *values, unsigned tid) override{
-    LOG(FATAL) << "not implemented";
-  }
-
-  void BatchPut(coroutine<void>::push_type& sink, base::ConstArray<uint64_t> keys,
+  void BatchPut(base::ConstArray<uint64_t> keys,
                 std::vector<base::ConstArray<float>> &values,
-                unsigned rt) override {
+                unsigned tid) override {
     std::vector<uint64_t> keys_arr;
-    for(int i = 0; i < keys.Size(); i++){
+    for (int i = 0; i < keys.Size(); i++) {
       auto &key = keys[i];
       auto iter = hash_table_.find(key);
       uint64_t index_pos = -1;
-      if(iter == hash_table_.end()){
+      if (iter == hash_table_.end()) {
         index_pos = key_cnt++;
         hash_table_[key] = index_pos;
         index_info[index_pos].in_cache = false;
@@ -362,23 +371,22 @@ public:
       }
       IndexInfo *info = &index_info[index_pos];
       keys_arr.emplace_back(index_pos);
-      if(info->in_cache){
-        memcpy(cache_ + info->cache_offset * value_size, values[i].Data(), value_size);
+      if (info->in_cache) {
+        memcpy(cache_ + info->cache_offset * value_size, values[i].Data(),
+               value_size);
       }
     }
-    BatchPutSSD(base::ConstArray<uint64_t>(keys_arr), values, rt);
+    BatchPutSSD(base::ConstArray<uint64_t>(keys_arr), values, tid);
   }
 
-  void BatchPutSSD(base::ConstArray<uint64_t> keys_array, std::vector<base::ConstArray<float>> &value, int rt) {
+  void BatchPutSSD(base::ConstArray<uint64_t> keys_array,
+                   std::vector<base::ConstArray<float>> &value, int tid) {
     const int nr_batch_pages = 32;
     int i = 0;
-    int tid = rt / corotine_per_thread;
-    while(i < keys_array.Size()) {
+    while (i < keys_array.Size()) {
       int batched_size = std::min(nr_batch_pages, keys_array.Size() - i);
-      SubBulkLoad(
-          batched_size,
-          keys_array.SubArray(i, i + batched_size), value, i,
-          write_buffer_[rt], tid);
+      SubBulkLoad(batched_size, keys_array.SubArray(i, i + batched_size), value,
+                  i, write_buffer_[tid], tid);
       i += batched_size;
     }
   }
@@ -397,7 +405,7 @@ public:
     std::vector<int> indexes;
     std::vector<int> free_list;
     uint64_t hit_cnt_sum;
-    while(LIKELY(!cleaner_stop_)){
+    while (LIKELY(!cleaner_stop_)) {
       indexes.clear();
       free_list.clear();
       hit_cnt_sum = 0;
@@ -407,14 +415,14 @@ public:
           hit_cnt_sum += index_info[i].hit_cnt;
         }
       }
-      if(indexes.size() == 0){
+      if (indexes.size() == 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         continue;
       }
       uint64_t half_hit_cnt_avg = hit_cnt_sum / indexes.size() / 2;
-      for(int i = 0; i < indexes.size(); i++){
+      for (int i = 0; i < indexes.size(); i++) {
         int index = indexes[i];
-        if(index_info[index].hit_cnt < half_hit_cnt_avg){
+        if (index_info[index].hit_cnt < half_hit_cnt_avg) {
           free_list.push_back(index_info[index].cache_offset);
           index_info[index].in_cache = false;
         }
