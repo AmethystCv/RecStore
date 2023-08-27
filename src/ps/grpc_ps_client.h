@@ -35,13 +35,8 @@ public:
   explicit ParameterClient(const std::string &host, int port, int shard);
   ~ParameterClient() {}
 
-  bool GetParameter(ConstArray<uint64_t> &keys,
-                    std::vector<std::vector<float>> *values, bool perf = true);
-  bool GetParameter(ConstArray<unsigned int> &keys,
-                    std::vector<std::vector<float>> *values, bool perf = true);
-
   // this interface assume all keys with the same embedding dimension
-  bool GetParameter(ConstArray<uint64_t> &keys, float *values,
+  bool GetParameter(ConstArray<uint64_t> &keys, float *values, int64_t model_name,
                     bool perf = true);
 
   inline int shard() const { return shard_; }

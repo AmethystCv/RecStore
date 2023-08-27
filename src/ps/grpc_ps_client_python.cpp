@@ -10,12 +10,12 @@ public:
   explicit PythonParameterClient(const std::string &host, int64_t port, int64_t shard, int64_t emb_dim)
       : ParameterClient(host, port, shard), emb_dim_(emb_dim) {}
 
-  torch::Tensor GetParameter(torch::Tensor &keys, bool perf = true) {
+  torch::Tensor GetParameter(torch::Tensor &keys, int64_t model_id) {
     const uint64_t *key_ptr = static_cast<const uint64_t *>(keys.data_ptr());
     torch::Tensor result = torch::empty({keys.size(0), emb_dim_});
     float *value_ptr = static_cast<float *>(result.data_ptr());
     ConstArray<uint64_t> keys_array(key_ptr, keys.size(0));
-    ParameterClient::GetParameter(keys_array, value_ptr, perf);
+    ParameterClient::GetParameter(keys_array, value_ptr, model_id, true);
     return result;
   }
 

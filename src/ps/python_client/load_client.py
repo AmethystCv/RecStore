@@ -40,4 +40,5 @@ if __name__ == '__main__':
     args.dataset = config['dataset']
     args.test = config['test']
     args.table_size = config['table_size']
+    args.model_id = config['model_id']
     client(args)

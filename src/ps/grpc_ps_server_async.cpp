@@ -134,9 +134,9 @@ public:
     std::vector<std::string> blocks;
     // FB_LOG_EVERY_MS(INFO, 1000)
     //     << "[PS] Getting " << keys_array.Size() << " keys";
-
+    int64_t model_id = request->has_model_id() ? request->model_id() : 0;
     std::vector<ParameterPack> packs;
-    cache_ps_->GetParameterRun2Completion(keys_array, packs, tid);
+    cache_ps_->GetParameterRun2Completion(keys_array, packs, model_id, tid);
     for (auto each : packs) {
       compressor.AddItem(each, &blocks);
     }
@@ -158,7 +158,8 @@ public:
     const ParameterCompressReader *reader =
         reinterpret_cast<const ParameterCompressReader *>(
             request->parameter_value().data());
-    cache_ps_->PutParameter(reader, tid);
+    int64_t model_id = request->has_model_id() ? request->model_id() : 0;
+    cache_ps_->PutParameter(reader, model_id, tid);
     under_process->timer.end();
     under_process->responder.Finish(under_process->reply, Status::OK, under_process);
   }

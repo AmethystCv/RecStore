@@ -9,7 +9,7 @@
 #include "base/log.h"  // NOLINT
 #include "base/factory.h"
 
-#include "storage/kv_engine/base_kv.h"
+#include "storage/kv_engine/engine_double_desk.h"
 #include "folly/ProducerConsumerQueue.h"
 #include "parameters.h"
 
@@ -41,8 +41,7 @@ class CachePS {
     config.memory_pool_size = memory_pool_size;
     config.num_threads = num_threads;
     config.max_batch_keys_size = max_batch_keys_size;
-    auto p = base::Factory<BaseKV, const BaseKVConfig &>::NewInstance("KVEngineDoubleDesk",
-                                                                      config);
+    auto p = new KVEngineDoubleDesk(config);
     base_kv_.reset(p);
   }
 
@@ -74,15 +73,7 @@ class CachePS {
     return true;
   }
 
-  void PutSingleParameter(const ParameterCompressItem *item, int tid) {
-    bool success;
-    auto key = item->key;
-    auto dim = item->dim;
-    base_kv_->Put(
-        key, std::string_view((char *)item->data(), dim * sizeof(float)), tid);
-  }
-
-  void PutParameter(const ParameterCompressReader *reader, int tid){
+  void PutParameter(const ParameterCompressReader *reader, int model_id, int tid){
     std::vector<uint64_t> keys_vec;
     std::vector<base::ConstArray<float>> values;
     for(int i = 0; i < reader->item_size(); i++){
@@ -91,15 +82,15 @@ class CachePS {
     }
     base::ConstArray<uint64_t> keys(keys_vec);
 
-    base_kv_->BatchPut(keys, values, tid);
+    base_kv_->BatchPut(keys, values, model_id, tid);
   }
 
-  bool GetParameterRun2Completion(key_t key, ParameterPack &pack, int tid) {
+  bool GetParameterRun2Completion(key_t key, ParameterPack &pack, int model_id, int tid) {
     std::vector<uint64_t> keys = {key};
     base::ConstArray<uint64_t> keys_array(keys);
     std::vector<base::ConstArray<float>> values;
 
-    base_kv_->BatchGet(keys_array, &values, tid);
+    base_kv_->BatchGet(keys_array, &values, model_id, tid);
     base::ConstArray<float> value = values[0];
 
 
@@ -117,10 +108,10 @@ class CachePS {
     return true;
   }
 
-  bool GetParameterRun2Completion(base::ConstArray<uint64_t> keys, std::vector<ParameterPack> &pack, int tid) {
+  bool GetParameterRun2Completion(base::ConstArray<uint64_t> keys, std::vector<ParameterPack> &pack, int model_id, int tid) {
     std::vector<base::ConstArray<float>> values;
 
-    base_kv_->BatchGet(keys, &values, tid);
+    base_kv_->BatchGet(keys, &values, model_id, tid);
   
     for(int i = 0; i < keys.Size(); i++){
       pack.emplace_back(keys[i], values[i].Size(), values[i].Data());
@@ -132,6 +123,6 @@ class CachePS {
  private:
 
   int value_size;
-  std::unique_ptr<BaseKV> base_kv_;
+  std::unique_ptr<KVEngineDoubleDesk> base_kv_;
   std::atomic<bool> stopFlag_{false};
 };

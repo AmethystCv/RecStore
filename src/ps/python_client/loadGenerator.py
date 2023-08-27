@@ -40,13 +40,13 @@ def loadGenSleep( sleeptime ):
   return
 
 def send_request(client, dataset,
-                 batch_id, epoch, batch_size, embedding_size):
+                 batch_id, epoch, batch_size, embedding_size, model_id):
   # print(f"[{time.time()}] batch_id = {batch_id}, epoch = {epoch}, batch_size = {batch_size}, sub_id = {sub_id}, tot_sub_batches = {tot_sub_batches}")
   indices = dataset.get(batch_size)
   GET_RATE = 0.96
   
   if random.random() < GET_RATE:
-    _result = client.GetParameter(indices)
+    _result = client.GetParameter(indices, model_id)
   else:
     client.PutParameter(indices, torch.empty(indices.shape[0], embedding_size))
 
@@ -60,6 +60,7 @@ def loadGenerator(args,
   batch_size = args.sub_task_batch_size
   epoch = 0
   exp_epochs = 0
+  model_id = args.model_id
 
   while exp_epochs < args.nepochs:
     for batch_id in range(args.num_batches):
@@ -68,7 +69,8 @@ def loadGenerator(args,
                     batch_id = batch_id,
                     epoch = epoch,
                     batch_size = batch_size,
-                    embedding_size=embedding_size
+                    embedding_size=embedding_size,
+                    model_id=model_id
                     )
 
       arrival_time = np.random.poisson(lam = arrival_rate, size = 1)

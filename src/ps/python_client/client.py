@@ -16,8 +16,8 @@ class ParameterClient:
         self.emb_dim = emb_dim
         self.client = PClient(host, port, shard, emb_dim)
     
-    def GetParameter(self, keys):
-        result = self.client.GetParameter(keys, True)
+    def GetParameter(self, keys, model_id):
+        result = self.client.GetParameter(keys, model_id)
         return result
 
     def PutParameter(self, keys, values) -> bool:

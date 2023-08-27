@@ -49,7 +49,7 @@ ParameterClient::ParameterClient(const std::string &host, int port, int shard)
   }
 }
 
-bool ParameterClient::GetParameter(ConstArray<uint64_t> &keys, float *values,
+bool ParameterClient::GetParameter(ConstArray<uint64_t> &keys, float *values, int64_t model_id,
                                    bool perf) {
   if (FLAGS_parameter_client_random_init) {
     CHECK(0) << "todo implement";
@@ -78,6 +78,7 @@ bool ParameterClient::GetParameter(ConstArray<uint64_t> &keys, float *values,
     request.set_perf(perf);
     request.set_keys(reinterpret_cast<const char *>(&keys[start]),
                       sizeof(uint64_t) * key_size);
+    request.set_model_id(model_id);
     // rpc
     grpc::ClientContext context;
     std::unique_ptr<ClientAsyncResponseReader<GetParameterResponse>> rpc = stubs_[0]->AsyncGetParameter(&context, request, &cq);
@@ -124,88 +125,6 @@ bool ParameterClient::GetParameter(ConstArray<uint64_t> &keys, float *values,
             << "error; not find key " << keys[get_embedding_acc] << " in ps";
       }
       get_embedding_acc++;
-    }
-  }
-  return true;
-}
-
-bool ParameterClient::GetParameter(ConstArray<uint64_t> &keys,
-                                   std::vector<std::vector<float>> *values,
-                                   bool perf) {
-  if (FLAGS_parameter_client_random_init) {
-    values->clear();
-    values->reserve(keys.Size());
-    for (size_t i = 0; i < keys.Size(); i++)
-      values->emplace_back(std::vector<float>(128, 0.1));
-
-    return true;
-  }
-
-  values->clear();
-  get_param_key_sizes_.clear();
-  get_param_status_.clear();
-  get_param_requests_.clear();
-  get_param_responses_.clear();
-  get_param_resonse_readers_.clear();
-  
-  values->reserve(keys.Size());
-
-  int request_num =
-      (keys.Size() + MAX_PARAMETER_BATCH - 1) / MAX_PARAMETER_BATCH;
-
-  get_param_status_.resize(request_num);
-  get_param_requests_.resize(request_num);
-  get_param_responses_.resize(request_num);
-
-  for (int start = 0, index = 0; start < keys.Size();
-       start += MAX_PARAMETER_BATCH, ++index) {
-    int key_size = std::min((int)(keys.Size() - start), MAX_PARAMETER_BATCH);
-    get_param_key_sizes_.emplace_back(key_size);
-    auto &status = get_param_status_[index];
-    auto &request = get_param_requests_[index];
-    auto &response = get_param_responses_[index];
-    request.set_perf(perf);
-    request.set_keys(reinterpret_cast<const char *>(&keys[start]),
-                      sizeof(uint64_t) * key_size);
-    // rpc
-    grpc::ClientContext context;
-    get_param_resonse_readers_.emplace_back(stubs_[0]->AsyncGetParameter(&context, request, &cq));
-    auto &rpc = get_param_resonse_readers_.back();
-        // GetParameter(&context, request, &response);
-    rpc->Finish(&response, &status, reinterpret_cast<void*>(index));
-  }
-
-  int get = 0;
-  while(get != request_num){
-    void *got_tag;
-    bool ok = false;
-    cq.Next(&got_tag, &ok);
-    if(unlikely(!ok)){
-      LOG(ERROR) << "error";
-    }
-    get++;
-  }
-
-  for (int i = 0; i < get_param_responses_.size(); ++i) {
-    auto &response = get_param_responses_[i];
-    int key_size = get_param_key_sizes_[i];
-    auto parameters = reinterpret_cast<const ParameterCompressReader *>(
-        response.parameter_value().data());
-
-    if (unlikely(parameters->size != key_size)) {
-      LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
-                 << key_size;
-      return false;
-    }
-
-    for (int index = 0; index < parameters->item_size(); ++index) {
-      auto item = parameters->item(index);
-      if (item->dim != 0) {
-        values->emplace_back(
-            std::vector<float>(item->embedding, item->embedding + item->dim));
-      } else {
-        values->emplace_back(std::vector<float>(0));
-      }
     }
   }
   return true;

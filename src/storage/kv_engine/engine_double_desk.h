@@ -5,11 +5,26 @@
 
 #include "base/factory.h"
 #include "base/lf_list.h"
-#include "base_kv.h"
-#include "storage/ssd/conaiveKVell.h"
+#include "base/array.h"
+#include "base/timer.h"
+#include "storage/ssd/spdk_wrapper.h"
 
 const static int THRETHOLD = 256;
-class KVEngineDoubleDesk : public BaseKV {
+
+struct BaseKVConfig {
+  int value_size = 0;
+  int num_threads = 0;
+  int max_batch_keys_size= 0;
+  size_t pool_size = 0;
+  int64_t hash_size = 0;
+  int64_t capacity = 0;
+  int64_t memory_pool_size = 0;
+  std::string path = "";
+  std::string library_file = "";
+  std::string hash_name = "clht";
+};
+
+class KVEngineDoubleDesk {
   struct IndexInfo {
     bool in_cache = false;
     int cache_offset = -1;
@@ -171,7 +186,7 @@ class KVEngineDoubleDesk : public BaseKV {
 
 public:
   explicit KVEngineDoubleDesk(const BaseKVConfig &config)
-      : BaseKV(config), value_size(config.value_size),
+      : value_size(config.value_size),
         max_batch_keys_size(config.max_batch_keys_size),
         thread_num(config.num_threads),
         cache_size(config.capacity * value_size * 0.05),
@@ -245,7 +260,7 @@ public:
     key_cnt = 0;
   }
 
-  ~KVEngineDoubleDesk() override {
+  ~KVEngineDoubleDesk() {
     for (int i = 0; i < thread_num; i++) {
       delete per_thread_buffer[i];
       delete unhit_array[i];
@@ -256,13 +271,11 @@ public:
     delete index_info;
   }
 
-  void Get(const uint64_t key, std::string &value, unsigned t) override {
-    LOG(FATAL) << "not implemented";
-  }
 
-  void BatchGet(base::ConstArray<uint64> keys,
+  void BatchGet(base::ConstArray<uint64_t> keys,
                 std::vector<base::ConstArray<float>> *values,
-                unsigned t) override {
+                int64_t model_id,
+                unsigned t) {
     xmh::Timer index_timer("BatchGet index");
     xmh::Timer ssd_timer("BatchGet ssd");
     xmh::Timer cache_timer("BatchGet cache");
@@ -341,7 +354,7 @@ public:
     timer_kvell_submitCommand.CumReport();
   }
 
-  void BulkLoad(base::ConstArray<uint64_t> keys, const void *value) override {
+  void BulkLoad(base::ConstArray<uint64_t> keys, const void *value) {
     Init();
     key_cnt = keys.Size();
     for (int i = 0; i < keys.Size(); i++) {
@@ -351,13 +364,11 @@ public:
     // ssd_->BulkLoad(keys.Size(), value);
   }
 
-  std::pair<uint64_t, uint64_t> RegisterPMAddr() const override {
-    return std::make_pair(0, 0);
-  }
 
   void BatchPut(base::ConstArray<uint64_t> keys,
                 std::vector<base::ConstArray<float>> &values,
-                unsigned tid) override {
+                int model_id,
+                unsigned tid) {
     std::vector<uint64_t> keys_arr;
     for (int i = 0; i < keys.Size(); i++) {
       auto &key = keys[i];
@@ -393,12 +404,7 @@ public:
     }
   }
 
-  void Put(const uint64_t key, const std::string_view &value,
-           unsigned t) override {
-    CHECK(0) << "not implemented";
-  }
-
-  void clear() override {
+  void clear() {
     Init();
     BulkLoad({}, nullptr);
   }
@@ -435,6 +441,3 @@ public:
     }
   }
 };
-
-FACTORY_REGISTER(BaseKV, KVEngineDoubleDesk, KVEngineDoubleDesk,
-                 const BaseKVConfig &);

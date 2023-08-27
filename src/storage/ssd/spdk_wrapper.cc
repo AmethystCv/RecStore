@@ -18,7 +18,7 @@ private:
   void Init() override {
     LOG(INFO) << "Initializing NVMe Controllers";
     spdk_env_opts_init(&opts_);
-
+    opts_.name = "frw_init";
     CHECK(spdk_env_init(&opts_) >= 0) << "Unable to initialize SPDK env\n";
 
     spdk_nvme_trid_populate_transport(&g_trid_, SPDK_NVME_TRANSPORT_PCIE);

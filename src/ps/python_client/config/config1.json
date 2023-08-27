@@ -1,4 +1,5 @@
 {
+    "model_id": 1,
     "avg_arrival_rate": 5,
     "max_latency": 25,
     "machine": "127.0.0.1",
