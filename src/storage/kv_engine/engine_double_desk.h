@@ -1,5 +1,5 @@
 #pragma once
-#include <folly/container/F14Map.h>
+#include <folly/concurrency/ConcurrentHashMap.h>
 #include <memory>
 #include <thread>
 
@@ -9,7 +9,6 @@
 #include "storage/ssd/conaiveKVell.h"
 
 const static int THRETHOLD = 256;
-static thread_local int in_queue = 0;
 class KVEngineDoubleDesk : public BaseKV {
   struct IndexInfo {
     bool in_cache = false;
@@ -17,9 +16,11 @@ class KVEngineDoubleDesk : public BaseKV {
     uint64_t hit_cnt;
   };
 
-  using dict_type = folly::F14FastMap<
-      uint64_t, uint64_t, std::hash<uint64_t>, std::equal_to<uint64_t>,
-      folly::f14::DefaultAlloc<std::pair<uint64_t const, uint64_t>>>;
+  // using dict_type = folly::F14FastMap<
+  //     uint64_t, uint64_t, std::hash<uint64_t>, std::equal_to<uint64_t>,
+  //     folly::f14::DefaultAlloc<std::pair<uint64_t const, uint64_t>>>;
+
+  using dict_type = folly::ConcurrentHashMap<uint64_t, uint64_t>;
 
   constexpr static int MAX_THREAD_CNT = 32;
   constexpr static int kBouncedBuffer_ = 20000;
@@ -68,7 +69,8 @@ class KVEngineDoubleDesk : public BaseKV {
       LOG(FATAL) << "I/O error status: "
                  << spdk_nvme_cpl_get_status_string(&cpl->status);
     }
-    in_queue--;
+    std::atomic_int *counter = (std::atomic_int *)ctx;
+    counter->fetch_sub(1);
   }
 
   static void BulkLoadCB(void *ctx, const struct spdk_nvme_cpl *cpl) {
@@ -265,7 +267,7 @@ public:
     xmh::Timer ssd_timer("BatchGet ssd");
     xmh::Timer cache_timer("BatchGet cache");
     xmh::Timer timer_kvell_submitCommand("Hier-SSD command");
-
+    std::atomic<int> in_queue{0};
     int unhit_size = 0;
     int i = 0;
     index_timer.CumStart();
@@ -293,7 +295,7 @@ public:
           in_queue++;
           ssd_->SubmitReadCommand(
               bouncedBuffer_[t] + unhit_size * ssd_->GetLBASize(), value_size,
-              lba_no, ReadCompleteCB, NULL, t);
+              lba_no, ReadCompleteCB, &in_queue, t);
           timer_kvell_submitCommand.CumEnd();
 
           values->emplace_back((float *)(bouncedBuffer_[t] +
@@ -343,7 +345,7 @@ public:
     Init();
     key_cnt = keys.Size();
     for (int i = 0; i < keys.Size(); i++) {
-      hash_table_[keys[i]] = i;
+      hash_table_.insert(keys[i], i);
       index_info[i].in_cache = false;
     }
     // ssd_->BulkLoad(keys.Size(), value);
@@ -363,7 +365,7 @@ public:
       uint64_t index_pos = -1;
       if (iter == hash_table_.end()) {
         index_pos = key_cnt++;
-        hash_table_[key] = index_pos;
+        hash_table_.insert_or_assign(key, index_pos);
         index_info[index_pos].in_cache = false;
         index_info[index_pos].hit_cnt = 0;
       } else {

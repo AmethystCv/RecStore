@@ -218,7 +218,7 @@ public:
   }
 
   void Process(int work_id){
-    base::bind_core(work_id);
+    base::bind_core(work_id + 32);
     worker_func(work_id);
   }
 

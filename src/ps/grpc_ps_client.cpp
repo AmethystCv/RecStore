@@ -254,7 +254,6 @@ bool ParameterClient::PutParameter(
   for (int start = 0, index = 0; start < keys.size();
        start += MAX_PARAMETER_BATCH, ++index) {
     int key_size = std::min((int)(keys.size() - start), MAX_PARAMETER_BATCH);
-    auto ret = std::make_shared<std::promise<bool>>();
     PutParameterRequest request;
     PutParameterResponse response;
     ParameterCompressor compressor;
@@ -275,11 +274,9 @@ bool ParameterClient::PutParameter(
     grpc::Status status =
         stubs_[0]->PutParameter(&context, request, &response);
     if (status.ok()) {
-      ret->set_value(true);
     } else {
       std::cout << status.error_code() << ": " << status.error_message()
                 << std::endl;
-      ret->set_value(false);
     }
   }
   return true;

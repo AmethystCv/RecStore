@@ -25,12 +25,25 @@ public:
 
     auto keys_accessor = keys.accessor<int64_t, 1>();
     auto values_accessor = values.accessor<float, 2>();
+
+    put_param_status_.clear();
+    put_param_requests_.clear();
+    put_param_responses_.clear();
+    put_param_resonse_readers_.clear();
+
+    int request_num =
+      (keys.size(0) + MAX_PARAMETER_BATCH - 1) / MAX_PARAMETER_BATCH;
+    put_param_status_.resize(request_num);
+    put_param_requests_.resize(request_num);
+    put_param_responses_.resize(request_num);
+
     for (int start = 0, index = 0; start < keys.size(0);
         start += MAX_PARAMETER_BATCH, ++index) {
       int key_size = std::min((int)(keys.size(0) - start), MAX_PARAMETER_BATCH);
 
-      PutParameterRequest request;
-      PutParameterResponse response;
+      auto &status = put_param_status_[index];
+      auto &request = put_param_requests_[index];
+      auto &response = put_param_responses_[index];
       ParameterCompressor compressor;
       std::vector<std::string> blocks;
       for (int i = start; i < start + key_size; i++) {
@@ -44,12 +57,19 @@ public:
       CHECK_EQ(blocks.size(), 1);
       request.mutable_parameter_value()->swap(blocks[0]);
       grpc::ClientContext context;
-      grpc::Status status =
-          stubs_[0]->PutParameter(&context, request, &response);
-      if (!status.ok()) {
-        std::cout << status.error_code() << ": " << status.error_message()
-                  << std::endl;
+      std::unique_ptr<grpc::ClientAsyncResponseReader<PutParameterResponse>> rpc = stubs_[0]->AsyncPutParameter(&context, request, &cq);
+      rpc->Finish(&response, &status, reinterpret_cast<void*>(index));
+    }
+
+    int cnt = 0;
+    while(cnt != request_num){
+      void *got_tag;
+      bool ok = false;
+      cq.Next(&got_tag, &ok);
+      if(!ok){
+        LOG(ERROR) << "error";
       }
+      cnt++;
     }
     return true;
   }

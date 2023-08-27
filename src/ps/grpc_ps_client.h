@@ -71,7 +71,14 @@ protected:
   std::vector<
       std::unique_ptr<grpc::ClientAsyncResponseReader<GetParameterResponse>>>
       get_param_resonse_readers_;
+  std::vector<Status> put_param_status_;
+  std::vector<PutParameterRequest> put_param_requests_;
+  std::vector<PutParameterResponse> put_param_responses_;
+  std::vector<
+      std::unique_ptr<grpc::ClientAsyncResponseReader<PutParameterResponse>>>
+      put_param_resonse_readers_;
   std::shared_ptr<Channel> channel_;
   std::vector<std::unique_ptr<xmhps::ParameterService::Stub>> stubs_;
   grpc::CompletionQueue cq;
+  grpc::CompletionQueue put_cq;
 };
