@@ -57,3 +57,14 @@ target_link_libraries(grpc_ps_client_python PUBLIC
 )
 
 target_link_libraries(grpc_ps_client_python PRIVATE Python3::Python)
+
+add_library(python_cpp_test MODULE
+    python_cpp_test.cpp
+)
+
+target_include_directories(python_cpp_test PUBLIC ${TORCH_INCLUDE_DIRS})
+
+target_link_libraries(python_cpp_test PUBLIC
+    ${TORCH_LIBRARIES}
+)
+target_link_libraries(python_cpp_test PRIVATE Python3::Python)
