@@ -2,6 +2,8 @@
 
 #include "base/tensor.h"
 
+using base::RecTensor;
+
 namespace recstore {
 struct InitStrategy {
     InitStrategy() = delete;
@@ -38,7 +40,7 @@ public:
     // values: emb.dtype tensor with shape [N, D]
 
     virtual void EmbInit(const RecTensor& keys, const RecTensor& init_values) = 0;
-    virtual void EmbInit(const base::RecTensor& keys, const InitStrategy& strategy) = 0;
+    virtual void EmbInit(const RecTensor& keys, const InitStrategy& strategy) = 0;
 
     // Core KV APIs (sync)
     virtual void EmbRead(const RecTensor& keys, RecTensor& values) = 0; // sync read
@@ -66,5 +68,8 @@ public:
     virtual ~CommonOp() = default;
 };
 
+namespace framework{
+std::shared_ptr<CommonOp> GetKVClientOp();
+} // namespace framework
 
 } // namespace recstore
