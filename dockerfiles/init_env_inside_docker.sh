@@ -10,7 +10,7 @@ PROJECT_PATH="$(cd .. && pwd)"
 CMAKE_REQUIRE="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 GPU_ARCH="80"
 
-sudo apt install -y libmemcached-dev ca-certificates lsb-release wget
+sudo apt install -y libmemcached-dev ca-certificates lsb-release wget python3-dev
 
 
 ln -sf ${PROJECT_PATH}/dockerfiles/docker_config/.bashrc /home/${USER}/.bashrc

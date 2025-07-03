@@ -1,4 +1,4 @@
-set(CITYHASH_ROOT_DIR ${PROJECT_SOURCE_DIR}/third_party/cityhash-install)
+set(CITYHASH_ROOT_DIR ${PROJECT_SOURCE_DIR}/third_party/cityhash)
 include(${PROJECT_SOURCE_DIR}/cmake/FindCityhash.cmake)
 
 
