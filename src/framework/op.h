@@ -5,6 +5,13 @@
 using base::RecTensor;
 
 namespace recstore {
+enum class InitStrategyType {
+    Normal,
+    Uniform,
+    Xavier,
+    Zero
+};
+
 struct InitStrategy {
     InitStrategy() = delete;
     InitStrategyType type;
