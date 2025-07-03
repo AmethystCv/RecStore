@@ -95,12 +95,12 @@ git checkout v0.3.1
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE} && make -j && sudo make install
 
-mkdir -p ${PROJECT_PATH}/third_party/libtorch
-cd ${PROJECT_PATH}/third_party/libtorch
-CUDA_VERSION="cu118"
-wget https://download.pytorch.org/libtorch/${CUDA_VERSION}/libtorch-cxx11-abi-shared-with-deps-2.0.0%2B${CUDA_VERSION}.zip -O libtorch.zip \
-&& unzip libtorch.zip -d . \
-&& rm libtorch.zip
+# mkdir -p ${PROJECT_PATH}/third_party/libtorch
+# cd ${PROJECT_PATH}/third_party/libtorch
+# CUDA_VERSION="cu117"
+# wget https://download.pytorch.org/libtorch/${CUDA_VERSION}/libtorch-cxx11-abi-shared-with-deps-2.0.0%2B${CUDA_VERSION}.zip -O libtorch.zip \
+# && unzip libtorch.zip -d . > /dev/null \
+# && rm libtorch.zip
 
 # find /usr -name "libparquet.so"
 # find /usr -name "properties.h" | grep "parquet/properties.h"
