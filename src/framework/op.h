@@ -3,6 +3,13 @@
 #include "base/tensor.h"
 
 namespace recstore {
+enum class InitStrategyType {
+    Normal,
+    Uniform,
+    Xavier,
+    Zero
+};
+
 struct InitStrategy {
     InitStrategy() = delete;
     InitStrategyType type;
