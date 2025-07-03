@@ -90,6 +90,11 @@ sudo apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename
 sudo apt update
 sudo apt install -y -V libarrow-dev libparquet-dev
 
+cd ${PROJECT_PATH}/third_party/cpptrace
+git checkout v0.3.1
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE} && make -j && sudo make install
+
 mkdir -p ${PROJECT_PATH}/third_party/libtorch
 cd ${PROJECT_PATH}/third_party/libtorch
 CUDA_VERSION="cu118"
