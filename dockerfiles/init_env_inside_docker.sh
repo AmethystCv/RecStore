@@ -10,7 +10,7 @@ PROJECT_PATH="$(cd .. && pwd)"
 CMAKE_REQUIRE="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 GPU_ARCH="80"
 
-sudo apt install -y libmemcached-dev ca-certificates lsb-release wget
+sudo apt install -y libmemcached-dev ca-certificates lsb-release wget python3-dev
 
 
 ln -sf ${PROJECT_PATH}/dockerfiles/docker_config/.bashrc /home/${USER}/.bashrc
@@ -89,6 +89,18 @@ wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr '
 sudo apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
 sudo apt update
 sudo apt install -y -V libarrow-dev libparquet-dev
+
+cd ${PROJECT_PATH}/third_party/cpptrace
+git checkout v0.3.1
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE} && make -j && sudo make install
+
+# mkdir -p ${PROJECT_PATH}/third_party/libtorch
+# cd ${PROJECT_PATH}/third_party/libtorch
+# CUDA_VERSION="cu117"
+# wget https://download.pytorch.org/libtorch/${CUDA_VERSION}/libtorch-cxx11-abi-shared-with-deps-2.0.0%2B${CUDA_VERSION}.zip -O libtorch.zip \
+# && unzip libtorch.zip -d . > /dev/null \
+# && rm libtorch.zip
 
 # find /usr -name "libparquet.so"
 # find /usr -name "properties.h" | grep "parquet/properties.h"
