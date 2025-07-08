@@ -7,6 +7,11 @@ config['cache_ps']['ps_type'] = "GRPC"
 config['cache_ps']['max_batch_keys_size'] = 65536
 config['cache_ps']['num_threads'] = 32
 
+config['client'] = dict()
+config['client']['host'] = "127.0.0.1"
+config['client']['port'] = 15000
+config['client']['shard'] = 1
+
 
 base_kv_config = dict()
 base_kv_config['kv_type'] = "KVEngineMap"

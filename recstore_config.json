@@ -10,5 +10,10 @@
             "value_pool_size": 1073741824,
             "corotine_per_thread": 1
         }
+    },
+    "client": {
+        "host": "127.0.0.1",
+        "port": 15000,
+        "shard": 1
     }
 }
