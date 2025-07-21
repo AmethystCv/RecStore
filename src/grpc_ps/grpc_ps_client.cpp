@@ -46,7 +46,7 @@ GRPCParameterClient::GRPCParameterClient(json config) : recstore::BasePSClient(c
   host_       = config.value("host", "localhost");
   port_       = config.value("port", 15000);
   shard_      = config.value("shard", 0);
-  nr_clients_(FLAGS_get_parameter_threads);
+  nr_clients_ = FLAGS_get_parameter_threads;
   Initialize();
   channel_ = grpc::CreateChannel(fmt::format("{}:{}", host_, port_), grpc::InsecureChannelCredentials());
   for (int i = 0; i < nr_clients_; i++) {
